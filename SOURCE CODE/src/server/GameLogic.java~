@@ -1,0 +1,645 @@
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+package server;///////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+import java.util.Observable;
+import java.util.Observer;
+import java.util.Random;
+import java.util.Vector;
+
+public class GameLogic extends Observable
+{
+	//\//privates//\//
+	private Vector<Player> players;
+	private int currentPlayer;
+	private Player player;	
+	private boolean finished;	
+	private Map map;
+
+	public GameLogic() 
+	{
+		//\//sets up the rules of the game
+		players = new Vector<Player>();
+		currentPlayer = -1;
+		finished = false;
+		map = new Map();
+	}
+	
+	public GameLogic(String mapFile) //\//same as above only that it works with a custom map not with the deaulft one.
+	{
+		players = new Vector<Player>();
+		currentPlayer = -1;
+		finished = false;
+		map = new Map(mapFile);
+	}
+	
+	public Vector<Player> getPlayers() 
+	{
+		return players;
+	}
+	
+	public boolean isFinished() //\//if the game is finished it finishes.
+	{
+		return finished;
+	}
+	
+	public void setFinished(boolean finished) 
+	{
+		this.finished = finished;//\//sets a boolean value if the game has been finished
+	}
+
+	public Player getPlayer() 
+	{
+		return player;
+	}
+	
+	public Player getPlayer(String username) 
+	{//\//string of players 
+		for (Player p : players) 
+		{
+			if (p.getClient().getUsername().equalsIgnoreCase(username))
+			{
+				return p;
+			}
+		}
+		return null;
+	}
+
+	public void setPlayer(Player player) 
+	{
+		this.player = player;
+	}
+	
+	public Map getMap()
+	{
+		return map;
+	}
+	
+	public Tile getTile(int tileX, int tileY) 
+	{//\//reads the map
+		return map.getTiles()[tileY][tileX];
+	}
+	
+	public void startNewGame(String mapFile)
+	{
+		map = new Map(mapFile);
+		for (Player p : players) 
+		{
+			p.reset();
+			randLoc(p);
+		}
+		
+		finished = false;
+		updateView();
+	}
+
+	public void join(Connection client) 
+	{
+		Player newPlayer = new Player(client, this);
+		randLoc(newPlayer);		//\//here we get the player spawned.
+		newPlayer.getClient().sendMessage("GOAL " + map.getGoal());
+		newPlayer.getClient().sendMessage("DUNGEON " + map.getName());
+		
+		synchronized (players)
+		{
+			players.add(newPlayer);
+			mssgAll("MESSAGE " + newPlayer.getClient().getUsername() + " joined the game.");
+			
+			if (players.size() == 1 && !finished) 
+			{
+				newTurn();//\//turn based mechanics require me to do such things
+			}
+		}
+		updateClientPlayers();
+	}
+	
+	public void leave(Player removedPlayer) 
+	{//\//if a player gets removed(or leaves volunatirly) this is how the issue will be handled
+		players.remove(removedPlayer);
+		removedPlayer.getCurrentTile().unOccupy();//\//I forgot to remove the player last time I was working on it and I had to kill him in order to get rid of him off the map top lel
+		updateChange(removedPlayer.getX(), removedPlayer.getY());
+		
+		if (removedPlayer.isTurn()) 
+		{//\//deletes the player and cancles the turn
+			player = null;
+			currentPlayer--;
+			newTurn();
+		}
+		
+		//\// Update the map to remove the dead player and drop their gold
+		Tile leftTile = getTile(removedPlayer.getX(), removedPlayer.getY());
+		leftTile.unOccupy();
+		
+		if (removedPlayer.getGold() > 0) //\//we need to have a certain amount of gold in order to complete game so we can still get it back har har
+		{
+			leftTile.setDirt('G');
+			leftTile.addGold(removedPlayer.getGold());
+		}
+		
+		mssgAll("MESSAGE " + removedPlayer.getClient().getUsername() + " left the game.");
+		updateClientPlayers();
+	}
+	
+	public void updateClientPlayers() 
+	{
+		//\//Notifies all clients in the game if there is a change in the player list
+		//\//half of the thing bellow are barely used
+		synchronized (players) 
+		{
+			for (Player p : players) 
+			{
+				String playerMessage = "PLAYERS " + players.size();
+				
+				for (Player p2 : players) 
+				{
+					int chat = 1;
+					int dead = 0;
+					
+					if (p2 == p)
+					{
+						chat = 0;
+					}
+					
+					if (p2.isDed())
+					{
+						dead = 1;
+					}
+					
+					playerMessage += "\n" + p2.getClient().getUsername() + " " + dead + " " + chat;
+				}
+				
+				p.getClient().sendMessage(playerMessage);
+			}
+		}
+		
+		updateView();
+	}
+	
+
+	public void randLoc(Player locatedPlayer)//\//here we cna generate a random location for the player to begin his game
+	{
+		Random rand = new Random();
+		int newX = locatedPlayer.getX();
+		int newY = locatedPlayer.getY();
+		
+		synchronized (map) {
+			//\// Continue to generate a random location until a free tile is found
+			while (true) {
+				if (newX < 0 || newY < 0 || !getTile(newX, newY).plRoam()) //\//player wont end up in the wall
+				{
+					newX = rand.nextInt(map.rtWidth());
+					newY = rand.nextInt(map.rtHeight());
+				} 
+				
+				else 
+				{
+					break;
+				}
+			}
+			
+			getTile(newX, newY).occupy(locatedPlayer);
+		}
+		
+		//\// Update the player's position
+		locatedPlayer.setX(newX);
+		locatedPlayer.setY(newY);
+		
+		//\// Notify clients of the newly positioned player on the map
+		updateChange(newX, newY);
+	}
+	
+	public void newTurn() 
+	{//\//starts a new turn lol
+		if (player != null)
+		{
+			player.getClient().sendMessage("ENDTURN");
+		}
+		
+		nxtPlayer();
+		
+		if (player != null)
+		{
+			mssgAll("MESSAGE It is now " + player.getClient().getUsername() + "'s turn.");
+			player.setAp(6 - player.getSword() - player.getArmour() - player.getLantern());
+			player.getClient().sendMessage("STARTTURN");
+		}
+	}
+	
+	public void advanceTurn() {
+		//\// Check if player has won
+		if (player.getCurrentTile().getBase() == 'E' && player.getGold() >= map.getGoal())
+		{
+			winGame();
+		}
+		
+		else 
+		{
+			//\// Check if turn is ended
+			if (player.getAp() == 0) 
+			{
+				newTurn();
+			}
+		}
+	}
+	
+	public void winGame()//\//messages to notify the player
+	{
+		mssgAll("MESSAGE " + player.getClient().getUsername() + " won the game.");
+		player.getClient().sendMessage("WIN");
+	
+		for (Player p : players)
+		{
+			if (p != player && !p.isDed())
+			{
+				p.getClient().sendMessage("LOSE");
+			}
+		}
+
+		endGame();
+	}
+	
+	public void endGame() 
+	{
+		finished = true;//\//gee I wonder what would this do
+	}
+	
+	public void nxtPlayer()//\// Changes which player is having their turn
+	{
+		//\// Check if at least one player is alive
+		boolean playerAlive = false;
+		
+		for (Player p : players) 
+		{
+			if (!p.isDed()) 
+			{
+				playerAlive = true;
+				break;
+			}
+		}
+		
+		if (!playerAlive) 
+		{
+			player = null;
+			return;
+		}
+		
+		while (true) 
+		{
+			currentPlayer++;
+			
+			if (currentPlayer >= players.size())
+			{
+				currentPlayer = 0;
+			}
+			
+			if (!players.get(currentPlayer).isDed())//\//the ones who are dead are to remain dead.
+			{
+				player = players.get(currentPlayer);
+				break;
+			}
+		}
+	}
+
+	public void mssgAll(String mssg, boolean skipOne) 
+	{//\//sends a message to all the players in the game
+		for (Player p : players)
+		{
+			if (skipOne && p == player) 
+			{
+				continue;
+			}
+			p.getClient().sendMessage(mssg);
+		}
+	}
+	
+	public void mssgAll(String message) 
+	{
+		mssgAll(message, false);//\//message for all
+	}
+
+	public void updateChange(int changeX1, int changeY1, int changeX2, int changeY2)
+	{//\//notifies all of the players that they can see the change 
+		for (Player p : players) 
+		{
+			if (p.canSeeLocation(changeX1, changeY1) || (changeX2 >= 0 && changeY2 >= 0 && p.canSeeLocation(changeX2, changeY2)))
+			{
+				p.getClient().sendMessage("CHANGE");
+			}
+		}
+		
+		updateView();
+	}
+	
+	public void updateChange(int changeX, int changeY) 
+	{
+		updateChange(changeX, changeY, -1, -1);
+	}
+	
+	public void updateView() 
+	{//\//tells the GUI that the game model has changed
+		setChanged();
+		notifyObservers();
+	}
+	
+	public void addObserver(Observer observer) 
+	{
+		super.addObserver(observer);//\//observer to update the view
+		updateView();
+	}
+	
+	public void playerMove(char direction) 
+	{
+		int oldX = player.getX();
+		int oldY = player.getY();
+		int newX = oldX;
+		int newY = oldY;
+		
+		//\// calculates new position
+		switch (direction)
+		{
+			case 'N': newY--; break;
+			case 'S': newY++; break;
+			case 'W': newX--; break;
+			case 'E': newX++; break;
+			default: System.out.println("Invalid direction given. Please validate the direction before calling playerMove()."); return;
+		}
+		
+		synchronized (map)
+		{
+			//\// Check if the player can even walk onto the new tile
+			if (newX >= 0 && newY >= 0 && newX < map.rtWidth() && newY < map.rtHeight() && getTile(newX, newY).plRoam()) 
+			{
+				
+				//\// Update tile occupation
+				getTile(newX, newY).occupy(player);
+				getTile(oldX, oldY).unOccupy();
+				
+				//\// Update player position
+				player.setX(newX);
+				player.setY(newY);
+				
+				//\// Update action points
+				player.setAp(player.getAp() - 1);
+				
+				//\// Notify clients of change
+				updateChange(newX, newY, oldX, oldY);
+				
+				advanceTurn();
+			} 
+			
+			else 
+			{
+				if (newX >= 0 && newY >= 0 && newX < map.rtWidth() && newY < map.rtHeight() && getTile(newX, newY).isOccupied())
+				{
+					player.getClient().sendMessage("FAIL Some doucehbag is in the way");
+				} 
+				
+				else
+				{
+					player.getClient().sendMessage("FAIL Solide wall ahead.");
+				}
+			}
+		}
+	}
+	
+	public void playerLook(Player lookPlayer)
+	{
+		String lookReply = "LOOKREPLY";
+		
+		int maxDistance = lookPlayer.visionDistance();
+		int centerX = lookPlayer.getX();
+		int centerY = lookPlayer.getY();
+		
+		//\// iteration through the rows
+		for (int row = -maxDistance; row <= maxDistance; row++) 
+		{
+			lookReply += "\n";
+			
+			//\// iteration through the columns
+			for (int col = -maxDistance; col <= maxDistance; col++)
+			{
+				int xPos = centerX + col;
+				int yPos = centerY + row;
+				int distance = Math.abs(row) + Math.abs(col);
+				
+				//\// Assume chars outside of the map to be walls
+				if (distance > maxDistance + 1)
+				{					
+					lookReply += "X";
+					continue;
+				} 
+				
+				else if (xPos < 0 || yPos < 0 || xPos >= map.rtWidth() || yPos >= map.rtHeight())
+				{
+					lookReply += "#";
+					continue;
+				}
+				
+				Tile currentTile = getTile(xPos, yPos);
+				
+				if (currentTile != lookPlayer.getCurrentTile() && currentTile.isOccupied())
+				{
+					lookReply += "P";
+				} 
+				
+				else
+				{
+					lookReply += currentTile.getBase();
+				}
+			}
+		}
+		
+		lookPlayer.getClient().sendMessage(lookReply);
+	}
+	
+	
+	public void playerItem() 
+	{
+		Tile tile = player.getCurrentTile();
+		char contents = tile.getBase();
+		
+		switch (contents)
+		{
+			case Tile.EXIT:
+			case Tile.FLOOR:
+				player.getClient().sendMessage("FAIL Nothing to pick up.");
+				break;
+				
+			case Tile.GOLD:
+				//\// Remove the gold from the tile and give to the player top lel
+				int amount = tile.popGold();
+				player.addGold(amount);
+				
+				//\// Notify clients of change
+				updateChange(player.getX(), player.getY());
+				player.getClient().sendMessage("SUCCEED Successfully picked up " + amount + " gold.");
+				
+				//\// Move turn along
+				player.setAp(player.getAp() - 1);
+				advanceTurn();
+				break;
+				
+			case Tile.ARMOUR:
+				if (player.getArmour() == 0) 
+				{
+					//\// Gives the armour 
+					player.setArmour(1);
+					
+					//\// Removes the A from the tile
+					tile.setDirt(Tile.FLOOR);
+					
+					//\// Notify clients of the change
+					updateChange(player.getX(), player.getY());
+					player.getClient().sendMessage("SUCCEED Successfully picked up armour.");
+					
+					//\// Move turn along
+					player.setAp(player.getAp() - 1);
+					advanceTurn();
+				} 
+				
+				else
+				{
+					player.getClient().sendMessage("FAIL You already have armour.");
+				}
+				break;
+				
+			case Tile.HEALTH:
+				//\// Give HP to the player
+				player.setHp(player.getHp() + 1);
+				
+				//\// Removes H from the tile
+				tile.setDirt(Tile.FLOOR);
+				
+				//\// Notify clients of change
+				updateChange(player.getX(), player.getY());
+				player.getClient().sendMessage("SUCCEED Successfully picked up and drank health potion.");
+				
+				//\// Move turn along
+				player.setAp(0);
+				advanceTurn();
+				break;
+				
+			case Tile.LANTERN:
+				if (player.getLantern() == 0)
+				{
+					//\// Give the lantern
+					player.setLantern(1);
+					
+					//\// Removes the lantern from the tile
+					tile.setDirt(Tile.FLOOR);
+					
+					//\// Notify clients of change
+					updateChange(player.getX(), player.getY());
+					player.getClient().sendMessage("SUCCEED Successfully picked up lantern");
+					
+					//\// Move turn along
+					player.setAp(player.getAp() - 1);
+					advanceTurn();
+				} else {
+					player.getClient().sendMessage("FAIL You already have a lantern.");
+				}
+				break;
+				
+			case Tile.SWORD:
+				if (player.getSword() == 0) {
+					//\// Give the sword to the player
+					player.setSword(1);
+					
+					//\// Remove the sword from the tile
+					tile.setDirt(Tile.FLOOR);
+					
+					//\// Notify clients of the change
+					updateChange(player.getX(), player.getY());
+					player.getClient().sendMessage("SUCCEED Successfully picked up sword");
+					
+					//\// Move turn along
+					player.setAp(player.getAp() - 1);
+					advanceTurn();
+				} else {
+					player.getClient().sendMessage("FAIL you already have a sword.");
+				}
+				break;
+		}
+	}
+
+	public void playerShout(Player shoutPlayer, String message) 
+	{
+		for (Player p : players)
+		{
+			if (p.canSeeLocation(shoutPlayer.getX(), shoutPlayer.getY())) 
+			{
+				p.getClient().sendMessage("SHOUT " + shoutPlayer.getClient().getUsername() + " " + message);
+			}
+		}
+	}
+	
+	public void playerEndTurn() 
+	{//\//end turn
+		player.setAp(0);
+		advanceTurn();
+	}
+	
+
+	public void playerAttack(char direction) 
+	{//\//attacks are usually with successrate of 3/4
+		int targetX = player.getX();
+		int targetY = player.getY();
+		
+		//\//\//\// Calculate new position
+		switch (direction) 
+		{
+			case 'N': targetY--; break;
+			case 'S': targetY++; break;
+			case 'W': targetX--; break;
+			case 'E': targetX++; break;
+			default: System.out.println("Invalid direction given. Please validate the direction before calling playerMove()."); return;
+		}
+		
+		//\//\//\// Check if there is a player stood in the target direction
+		Tile targetTile = getTile(targetX, targetY);
+		if (targetTile.isOccupied()) 
+		{
+			Player targetPlayer = targetTile.getPlayer();
+			
+			//\//\//\// 75% chance of harming the other player
+			Random rand = new Random();
+			int randomInt = rand.nextInt(4);
+			
+			//\//\//\// If the player hits the target
+			if (randomInt < 3) 
+			{
+				int damage = 1 + player.getSword() - targetPlayer.getArmour();
+				
+				if (damage == 0)
+				{
+					player.getClient().sendMessage("ATTACKWARNING " + targetPlayer.getClient().getUsername() + "'s armour prevented any damage.");
+					targetPlayer.getClient().sendMessage("ATTACKWARNING Your armour protected you from " + player.getClient().getUsername() + "'s attack.");
+				}
+				
+				else
+				{
+					player.getClient().sendMessage("ATTACKSUCCEED " + targetPlayer.getClient().getUsername());
+					targetPlayer.getClient().sendMessage("ATTACKWARNING You have been attacked by " + player.getClient().getUsername() + "!");
+					targetPlayer.setHp(targetPlayer.getHp() - damage);
+				}
+			} 
+			
+			else 
+			{
+				targetPlayer.getClient().sendMessage("ATTACKWARNING " + player.getClient().getUsername() + " attempted to attack but failed.");
+				player.getClient().sendMessage("ATTACKWARNING Your attack missed the target.");
+			}
+			
+			player.setAp(0);
+			advanceTurn();
+		} 
+		
+		else 
+		{
+			player.getClient().sendMessage("FAIL No player to attack.");
+		}
+	}
+}
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////

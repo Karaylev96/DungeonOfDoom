@@ -1,0 +1,281 @@
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+package server;///////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+import java.io.IOException;
+
+public class Player
+{
+	//privates//
+	private Connection client;
+	private GameLogic game;	
+	private boolean dead;
+	private boolean online;
+	private int x;
+	private int y;
+	private int lantern;
+	private int sword;
+	private int armour;
+	private int gold;
+	private int hp;
+	private int ap;
+ 
+	public Player(Connection client, GameLogic game) 
+	{
+		this.client = client;
+		client.setPlayer(this);
+		
+		this.game = game;
+		//default values
+		x = -1;
+		y = -1;
+		
+		lantern = 0;
+		sword = 0;
+		armour = 0;
+		
+		gold = 0;
+		hp = 3;
+		ap = 0;
+	}
+	//reset values
+	public void reset() 
+	{
+		setLantern(0);
+		setSword(0);
+		setArmour(0);
+		
+		setGold(0);
+		setHp(3);
+		setAp(0);
+	}
+	
+	public Connection getClient()
+	{
+		return client;//client for the server
+	}
+
+	public GameLogic getGame()//uses the gamelogic rules
+	{
+		return game;
+	}
+
+	public boolean isDed()//returns this state of the player
+	{
+		return dead;
+	}
+
+
+	public void setDead(boolean dead) {
+		this.dead = dead;
+	}
+
+	//localization setting
+	public int getX() 
+	{
+		return x;
+	}
+
+	public void setX(int x) 
+	{
+		this.x = x;
+	}
+
+
+	public int getY()
+	{
+		return y;
+	}
+
+
+	public void setY(int y) 
+	{
+		this.y = y;
+	}
+
+
+	public int getLantern()
+	{
+		return lantern;
+	}
+
+
+	public void setLantern(int lantern) 
+	{
+		this.lantern = lantern;
+		if (lantern == 1) {
+		client.sendMessage("LANTERNMOD");
+		}
+	}
+
+
+	public int getSword() 
+	{
+		return sword;
+	}
+
+
+	public void setSword(int sword) 
+	{
+		this.sword = sword;
+		
+		if (sword == 1)
+		{
+			client.sendMessage("SWORDMOD");
+		}
+	}
+
+	public int getArmour() 
+	{
+		return armour;
+	}
+
+
+	public void setArmour(int armour)
+	{//armor modifier for the game
+		this.armour = armour;
+		if (armour == 1) 
+		{
+			client.sendMessage("ARMOURMOD");
+		}
+	}
+
+	public int getGold()
+	{
+		return gold;
+	}
+
+	public void setGold(int gold)//gold setting
+	{
+		int difference = gold - this.gold;
+		this.gold = gold;
+		client.sendMessage("TREASUREMOD " + difference);
+	}
+	
+
+	public void addGold(int amount)
+	{
+		setGold(gold + amount);//the amount of gold being added
+	}
+
+
+	public int getHp() //add hit points
+	{
+		return hp;
+	}
+
+
+	public void setHp(int hp) //hit points setting
+	{
+		if (hp < 0)
+		{
+			hp = 0;
+		}
+
+		int difference = hp - this.hp;
+		this.hp = hp;
+		client.sendMessage("HITMOD " + difference);
+
+		if (hp == 0) 
+		{
+			ded();//if it equals zero you are dead.
+		}
+	}
+
+
+	public int getAp() //get a turn 
+	{
+		return ap;
+	}
+
+	public void setAp(int ap)//turn setting
+	{
+		this.ap = ap;
+	}
+
+	public boolean isOnline()
+	{
+		return online;
+	}
+
+	public void setOnline(boolean online) 
+	{
+		this.online = online;
+	}
+
+	public boolean isTurn() //give the specific client a turn
+	{
+		return (game.getPlayer() == this);
+	}
+	
+	public void leaveGame() //leaves thegmae
+	{
+		game.leave(this);
+	}
+
+	public void ded() //death is hard to write about
+	{
+		dead = true;
+		if (isTurn())
+		{
+			game.newTurn();
+		}
+		game.mssgAll("DEATH " + client.getUsername());
+		client.sendMessage("LOSE");
+		Tile deathTile = game.getTile(x, y);
+		deathTile.unOccupy();
+		
+		if (gold > 0) 
+		{
+			deathTile.setDirt('G');
+			deathTile.addGold(gold);
+		}
+		
+		game.updateChange(x, y);
+	}
+
+	public int visionDistance() //modifier for the vision
+	{
+		return 2 + lantern;
+	}
+
+	public boolean canSeeLocation(int xLocation, int yLocation)
+	{
+		int xDistance = Math.abs(x - xLocation);
+		int yDistance = Math.abs(y - yLocation);
+		int range = visionDistance();
+		int maxDistance = range + 1;		
+		if (xDistance <= range && yDistance <= range && xDistance + yDistance <= maxDistance)
+		{
+			return true;
+		}
+		
+		else 
+		{
+			return false;
+		}
+	}
+	
+	public Tile getCurrentTile() 
+	{
+		return game.getTile(x, y);
+	}
+	
+	public void kickOut()
+	{
+		try 
+		{
+			client.close();//will force the player to be kicked out. Still havent figured out how should I execute it properly.
+		} 
+		
+		catch (IOException e){}
+	}
+
+	public String toString() 
+	{
+		return client.getUsername();
+	}
+}
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////

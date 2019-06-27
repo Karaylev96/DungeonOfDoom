@@ -1,0 +1,396 @@
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+package server;///////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+import java.util.TimerTask;
+
+public class ClientMssg 
+{
+	//privates//
+	private Connection client;
+	private GameLogic game;
+	private Player player;	
+	private String command;
+	private String parameter;
+
+	public ClientMssg(String message, Connection client)
+	{
+		this.client = client;
+		game = client.getGame();
+		
+		if (client.isInGame()) //checks if theres a player
+		{
+			player = client.getPlayer();
+		}
+		
+		else 
+		{
+			player = null;
+		}
+		
+		command = message.split(" ", 2)[0];
+		
+		if (message.contains(" "))
+		{
+			parameter = message.split(" ", 2)[1];
+		}
+		
+		else 
+		{
+			parameter = null;
+		}
+		
+		handle();
+	}
+	
+	public void handle() 
+	{
+		if (command.equals("HELLO"))
+		{
+			if (client.getUsername() == null) 
+			{
+				clientHello();
+			} 
+			
+			else 
+			{
+				client.sendMessage("EPIC FAIL Must be sent before any other command");
+			}
+		}
+		
+		else if (client.isInGame()) //the commands used in the game 
+		{
+			if (command.equals("LOOK")) 
+			{
+				clientLook();
+			}			
+			else if (command.equals("MOVE"))
+			{
+				clientMove();
+			} 			
+			else if (command.equals("ATTACK")) 	
+			{
+				clientAttack();
+			} 			
+			else if (command.equals("PICKUP"))
+			{
+				clientPickUp();
+			} 
+			else if (command.equals("SHOUT")) 
+			{
+				clientShout();
+			} 
+			else if (command.equals("ENDTURN")) 
+			{
+				clientEndTurn();
+			}
+			else if (command.equals("STARTTYPING")) 
+			{
+				clientStartTyping();
+			} 
+			else if (command.equals("ENDTYPING")) 
+			{
+				clientEndTyping();
+			} 
+			else if (command.equals("CHAT")) 
+			{
+				clientChat();
+			} 
+			else 
+			{
+				client.sendMessage("EPIC FAIL Invalid command.");
+			}
+		} 
+		
+		else 
+		{
+			client.setUsername();
+			game.join(client);
+			handle();
+		}
+	}
+	
+	public void clientHello() 
+	{
+		if (parameter != null)
+		{
+			client.setUsername(parameter);
+			game.join(client);
+		} 
+		
+		else
+		{
+			client.sendMessage("EPIC FAIL Must include name.");
+		}
+	}
+	
+	public void clientLook()
+	{
+		game.playerLook(player);
+	}
+	
+
+	public void clientMove()///barely holding pyramid of if statements and exceptions
+	{
+		if (!game.isFinished()) 
+		{
+			if (!player.isDed()) 
+			{
+				if (player.isTurn()) 
+				{
+					if (parameter != null) 
+					{
+						if (parameter.matches("[NSEW]")) 
+						{
+							game.playerMove(parameter.charAt(0));
+						} 
+						
+						else 
+						{
+							client.sendMessage("EPIC FAIL Direction must be N, S, E or W.");
+						}
+					} 
+					
+					else
+					{
+						client.sendMessage("EPIC FAIL Move must include direction.");
+					}
+				} 
+				
+				else 
+				{
+					client.sendMessage("EPIC FAIL You can only move when it is your turn.");
+				}
+			}
+			
+			else 
+			{
+				client.sendMessage("EPIC FAIL You cannot move when you are dead.");
+			}
+		} 
+		
+		else 
+		{
+			client.sendMessage("EPIC FAIL You cannot move after the game has finished.");
+		}
+	}
+
+	public void clientAttack() 
+	{
+		if (!game.isFinished()) 
+		{
+			if (!player.isDed()) 
+			{
+				if (player.isTurn()) 
+				{
+					if (parameter != null) 
+					{
+						if (parameter.matches("[NSEW]"))
+						{
+							game.playerAttack(parameter.charAt(0));
+						}
+					} 
+					
+					else 
+					{
+						client.sendMessage("EPIC FAIL Attack must include direction.");
+					}
+				} 
+				
+				else
+				{
+					client.sendMessage("EPIC FAIL You can only attack when it is your turn.");
+				}
+			} 
+			
+			else
+			{
+				client.sendMessage("EPIC FAIL You cannot attack when you are dead.");
+			}
+		} 
+		
+		else 
+		{
+			client.sendMessage("EPIC FAIL You cannot attack after the game has finished.");
+		}
+	}
+	
+	public void clientPickUp()
+	{
+		if (!game.isFinished()) 
+		{
+			if (!player.isDed())
+			{
+				if (player.isTurn())
+				{
+					game.playerItem();
+				} 
+				
+				else 
+				{
+					client.sendMessage("EPIC FAIL You can only pick up when it is your turn.");
+				}
+			} 
+			
+			else
+			{
+				client.sendMessage("EPIC FAIL You cannot pick up when you are dead.");
+			}
+		} 
+		
+		else 
+		{
+			client.sendMessage("EPIC FAIL You cannot pick up after the game has finished.");
+		}
+	}
+	
+	public void clientShout() 
+	{
+		if (parameter != null)
+		{
+			game.playerShout(client.getPlayer(), parameter);
+		} 
+		
+		else 
+		{
+			client.sendMessage("EPIC FAIL Must include message.");
+		}
+	}
+	
+
+	public void clientEndTurn() 
+	{
+		if (!game.isFinished())
+		{
+			if (player.isTurn())
+			{
+				game.playerEndTurn();
+			} 
+			
+			else 
+			{
+				client.sendMessage("EPIC FAIL It is not your turn to end.");
+			}
+		} 
+		
+		else 
+		{
+			client.sendMessage("EPIC FAIL You cannot end the turn after the game has finished.");
+		}
+	}
+	
+//typing workwaround
+	public void clientStartTyping() 
+	{
+		game.mssgAll("STARTTYPING " + client.getUsername());
+	}
+
+	public void clientEndTyping()
+	{
+		game.mssgAll("ENDTYPING " + client.getUsername());
+	}
+	
+
+	public void clientChat()//chat handling for the client application
+	{
+		if (parameter.length() > 0) 
+		{
+			if (!client.isMuted()) 
+			{
+				
+				if (parameter.charAt(0) == '/')
+				{
+					String[] chatParameters = parameter.split(" ", 3);
+					String chatCommand = chatParameters[0];
+					String chatParameter = null;
+					String chatMessage = null;
+					
+					if (chatParameters.length > 1) 
+					{
+						chatParameter = chatParameters[1];
+						if (chatParameters.length > 2)
+						{
+							chatMessage = chatParameters[2];
+						}
+					}
+
+					if (chatCommand.equalsIgnoreCase("/whisper")) 
+					{
+						if (chatParameter != null) 
+						{
+							Player receivingPlayer = game.getPlayer(chatParameter);
+							if (receivingPlayer != null) 
+							{
+								if (chatMessage != null)
+								{
+									receivingPlayer.getClient().sendMessage("WHISPERFROM " + client.getUsername() + " " + chatMessage);
+									client.sendMessage("WHISPERTO " + receivingPlayer.getClient().getUsername() + " " + chatMessage);
+								} 
+								else 
+								{
+									client.sendMessage("EPIC FAIL Must have a message to whisper.");
+								}
+							} 
+							else 
+							{
+								client.sendMessage("EPIC FAIL Player '" + chatParameter + "' does not exist.");
+							}
+						} 
+						else 
+						{
+							client.sendMessage("EPIC FAIL include a name to whisper to..");
+						}
+					}
+
+					else if (chatCommand.equalsIgnoreCase("/waiting")) 
+					{
+						game.mssgAll("WAITING " + client.getUsername());
+					}
+					
+					else 
+					{
+						client.sendMessage("EPIC FAIL Unknown chat command '" + chatCommand + "'.");
+					}
+				}
+				
+				else
+				{
+					game.mssgAll("CHAT " + client.getUsername() + " " + parameter);
+				}
+				
+				client.incrementSpamCount();
+				client.getSpamTimer().schedule(new TimerTask() 
+				{
+					public void run() 
+					{
+						client.decrementSpamCount();
+					}
+				}, 3000); 
+				
+				if (client.getSpamCount() >= 5) 
+				{
+					client.setMuted(true);
+					client.getSpamTimer().schedule(new TimerTask()
+					{
+						public void run() {
+							client.setMuted(false);
+						}
+					}, 10000);
+				}
+			} 
+			
+			else
+			{
+				client.sendMessage("EPIC FAIL You cannot chat at the moment.");
+			}
+		}
+		
+		else
+		{
+			client.sendMessage("EPIC FAIL You need a chat message.");
+		}
+	}
+}
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
